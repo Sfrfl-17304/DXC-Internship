@@ -1,0 +1,9 @@
+streamlit
+pandas
+python-dotenv
+langchain
+langchain-community
+langchain-core
+langchain-ollama
+langchain-chroma
+unstructured[docx,pdf,image]
