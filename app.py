@@ -1,121 +1,116 @@
-import os
 import streamlit as st
-from pathlib import Path
-import sys
-import re
+from pymongo import MongoClient
+import os
+import re # Import the regular expression module
+from hybrid_search_mongodb.hr_engine.cv_processor import process_cv_directory
+from langchain_community.embeddings import OllamaEmbeddings
 from dotenv import load_dotenv
-from streamlit_pdf_viewer import pdf_viewer
 
-# --- Load environment variables ---
 load_dotenv()
 
-# --- Streamlit page config ---
+
+# --- Page Configuration ---
 st.set_page_config(
-    page_title="DXC Chatbot Demo",
+    page_title="HR Hybrid Search Engine",
     page_icon="logo.png",
     layout="wide"
 )
 
-# --- Project imports setup ---
-PROJECT_ROOT = Path(__file__).resolve().parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
+# --- Database Connection ---
+MONGO_USER = os.getenv("MONGO_USERNAME")
+MONGO_PASS = os.getenv("MONGO_PASSWORD")
+MONGO_HOST = "localhost"
+MONGO_PORT = "27017" # Use "27018" for the Protonow project
 
-from dxc_rag_pipeline.rag_chain import create_rag_chain
-from dxc_rag_pipeline.database_manager import build_database, DB_PATH
-
-# --- Custom CSS to hide Streamlit header/buttons ---
-st.markdown("""
-<style>
-    header, .stActionButton { visibility: hidden; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- Sidebar ---
-with st.sidebar:
-    st.image("logo.png", width=75)
-    st.title("DXC RAG Engine")
-    st.markdown("---")
-    st.info("This demo answers questions based on the `source_documents` directory.")
-    if st.button("Clear Chat History"):
-        st.session_state.messages = []
-        st.rerun()
-
-# --- Main header ---
-st.image("banner.png")
-st.subheader("AI Knowledge Engine Demo")
-
-# --- Initialize RAG system ---
-@st.cache_resource
-def initialize_system():
-    if not Path(DB_PATH).exists():
-        with st.spinner("Database not found. Building..."):
-            build_database()
-    return create_rag_chain()
-
+MONGO_URI = f"mongodb://{MONGO_USER}:{MONGO_PASS}@{MONGO_HOST}:{MONGO_PORT}/?authSource=admin"
+DB_NAME = "hr_dxc_database"
 try:
-    rag_chain = initialize_system()
-    st.success("RAG Engine is loaded and ready.")
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    client.server_info()
+    db = client[DB_NAME]
+    candidates_collection = db["candidates"]
+    st.sidebar.success("MongoDB Connected")
 except Exception as e:
-    st.error(f"Failed to load the RAG engine. Ensure Ollama is running. Error: {e}")
+    st.sidebar.error(f"MongoDB Connection Failed: {e}")
     st.stop()
 
-# --- Initialize session state for chat messages ---
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! I am DXC bot. How can I help you today?"}]
+# --- Embedding Model ---
+embedding_model = OllamaEmbeddings(model="mxbai-embed-large")
 
-# --- Display all past chat messages ---
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# --- UI ---
+st.title("HR Hybrid Search Engine")
+st.write("This tool helps HR find the best candidates by combining structured filtering and semantic search.")
 
-# --- Chat input handling ---
-if prompt := st.chat_input("Ask DXC bot..."):
-    # Append user message
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+# --- Sidebar for Actions ---
+st.sidebar.title("Admin Panel")
+st.sidebar.markdown("---")
+cv_directory = st.sidebar.text_input("CVs Folder Path", "./cv_samples")
+if st.sidebar.button("Process All CVs in Folder"):
+    if not os.path.isdir(cv_directory):
+        st.sidebar.error(f"Directory not found: {cv_directory}")
+    else:
+        with st.spinner(f"Processing all documents in {cv_directory}..."):
+            process_cv_directory(cv_directory)
+        st.sidebar.success("Batch processing complete!")
 
-    with st.chat_message("assistant"):
-        with st.spinner("DXC Bot is thinking..."):
-            # Prepare formatted chat history for model input
-            chat_history = ""
-            for msg in st.session_state.messages:
-                role = msg["role"].capitalize()
-                content = msg["content"]
-                chat_history += f"{role}: {content}\n"
+# --- Search Section ---
+st.header("Find Candidates")
+st.markdown("---")
+col1, col2 = st.columns(2)
 
-            # Invoke RAG chain
-            result = rag_chain.invoke({
-                "question": prompt,
-                "chat_history": chat_history
-            })
+with col1:
+    st.subheader("1. Structured Filtering")
+    required_skills = st.text_input("Required Skills (comma-separated)", "Python, LangChain")
+    min_experience = st.slider("Minimum Years of Experience", 0, 20, 3)
 
-            response_text = result.get("answer", "No answer found.")
-            sources = result.get("context", [])
+with col2:
+    st.subheader("2. Semantic Search (Optional)")
+    semantic_query = st.text_input("Describe the ideal candidate profile", "A candidate with experience building AI agents")
 
-            # --- Display AI response ---
-            st.markdown(response_text)
+if st.button("Search Candidates", type="primary"):
+    st.subheader("Search Results")
 
-            # --- Extract PDF filename from response using regex (assuming AI outputs Filename: xyz.pdf) ---
-            pdf_files = re.findall(r'Filename:\s*(\S+\.pdf)', response_text, re.IGNORECASE)
-            current_dir = os.getcwd()  # or set to your known absolute path to 'cv' folder
+    with st.spinner("Executing structured filter..."):
+        skills_list = [skill.strip() for skill in required_skills.split(',') if skill.strip()]
+        
+        # --- THIS IS THE CORRECTED LOGIC ---
+        filter_query = {
+            "experience_years": {"$gte": min_experience}
+        }
+        if skills_list:
+            # Create a case-insensitive regex for each skill
+            regex_skills = [re.compile(f"^{re.escape(skill)}$", re.IGNORECASE) for skill in skills_list]
+            filter_query["skills"] = {"$all": regex_skills}
+        # ------------------------------------
 
-            if pdf_files:
-                for pdf_file in pdf_files:
-                    selected_pdf_path = os.path.join(current_dir, "cv", pdf_file)
-                    if os.path.exists(selected_pdf_path):
-                        st.markdown(f"### 📄 Aperçu du CV sélectionné : `{pdf_file}`")
-                        pdf_viewer(selected_pdf_path, width=700, height=1000)
-                    else:
-                        st.warning(f"Impossible d'afficher le CV sélectionné : {pdf_file}")
+        results = list(candidates_collection.find(filter_query))
 
-            # --- Display source documents if any ---
-            if sources:
-                with st.expander("Show Sources"):
-                    for i, doc in enumerate(sources):
-                        st.write(f"**Source {i+1} (ID: {doc.metadata.get('source', 'N/A')})**")
-                        st.code(doc.page_content, language=None)
+    if not results:
+        st.warning("No candidates found matching the specified criteria.")
+    else:
+        # The rest of the logic for semantic ranking and display remains the same...
+        st.success(f"Found {len(results)} candidates matching the filters.")
+        
+        if semantic_query:
+            with st.spinner("Reranking results with semantic search..."):
+                query_embedding = embedding_model.embed_query(semantic_query)
+                
+                def get_similarity(candidate_embedding):
+                    import numpy as np
+                    return np.dot(query_embedding, candidate_embedding) / (np.linalg.norm(query_embedding) * np.linalg.norm(candidate_embedding))
 
-    # Append assistant response to session state
-    st.session_state.messages.append({"role": "assistant", "content": response_text})
+                for candidate in results:
+                    candidate['similarity'] = get_similarity(candidate['text_embedding_cv'])
+                
+                ranked_candidates = sorted(results, key=lambda x: x['similarity'], reverse=True)
+                st.info("Results have been semantically reranked.")
+        else:
+            ranked_candidates = results
+
+        for candidate in ranked_candidates:
+            with st.expander(f"**{candidate.get('candidate_name')}** - {candidate.get('experience_years')} years experience"):
+                st.write("**Skills:**", ", ".join(candidate.get('skills', [])))
+                if 'similarity' in candidate:
+                    st.write(f"**Relevance Score:** {candidate['similarity']:.2f}")
+                st.write("**Source File:**", candidate.get('source_file'))
+                st.text_area("Full CV Text", candidate.get('full_text_content'), height=200, key=str(candidate['_id']))
