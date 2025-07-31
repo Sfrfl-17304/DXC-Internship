@@ -1,7 +1,6 @@
 # DEMO VIDEO
 
-https://drive.google.com/file/d/1lORFN-4WlDX2YoxmGC8OkPGL8ZKFIvcr/view?usp=sharing
-
+https://drive.google.com/drive/folders/19uWQ29nO3WUz5xRy6sdLH9AB5l0uNJzD?usp=drive_link
 
 # DXC HR Hybrid Search Engine
 
