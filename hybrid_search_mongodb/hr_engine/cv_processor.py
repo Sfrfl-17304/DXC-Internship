@@ -1,19 +1,30 @@
 import os
 import json
+import logging
 from pymongo import MongoClient
 from langchain_groq import ChatGroq
 from langchain_community.embeddings import OllamaEmbeddings
-from dxc_rag_pipeline.loaders import get_document_loader
+from loaders.loaders import get_document_loader
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
+# --- Enable MongoDB Command Logging ---
+pymongo_logger = logging.getLogger('pymongo.command')
+pymongo_logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler()
+formatter = logging.Formatter('MongoDB Query: %(message)s')
+handler.setFormatter(formatter)
+pymongo_logger.addHandler(handler)
+print("MongoDB query logging enabled for CV processor")
+# ------------------------------------
+
 # --- Configuration ---
 MONGO_USER = os.getenv("MONGO_USERNAME")
 MONGO_PASS = os.getenv("MONGO_PASSWORD")
 MONGO_HOST = "localhost"
-MONGO_PORT = "27017" # Use "27018" for the Protonow project
+MONGO_PORT = "27017" 
 
 MONGO_URI = f"mongodb://{MONGO_USER}:{MONGO_PASS}@{MONGO_HOST}:{MONGO_PORT}/?authSource=admin"
 DB_NAME = "hr_dxc_database"
@@ -70,8 +81,11 @@ def process_cv_directory(directory_path: str):
             print(f"✅ Structured data extracted for {structured_data.get('candidate_name')}.")
 
             extracted_skills = structured_data.get("skills", [])
-            if extracted_skills:
-                for skill in extracted_skills:
+            # Normalize skills to lowercase for consistency
+            normalized_skills = [skill.strip().lower() for skill in extracted_skills] if extracted_skills else []
+            
+            if normalized_skills:
+                for skill in normalized_skills:
                     skills_collection.update_one(
                         {"skill_name": skill},
                         {"$setOnInsert": {"skill_name": skill}},
@@ -85,7 +99,7 @@ def process_cv_directory(directory_path: str):
                 "source_file": filename,
                 "candidate_name": structured_data.get("candidate_name"),
                 "experience_years": structured_data.get("experience_years"),
-                "skills": extracted_skills,
+                "skills": normalized_skills,  # Store normalized skills
                 "full_text_content": raw_text,
                 "text_embedding_cv": text_embedding
             }
