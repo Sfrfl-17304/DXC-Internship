@@ -6,4 +6,9 @@ langchain-community
 langchain-core
 langchain-ollama
 langchain-chroma
-unstructured[docx,pdf,image]
+unstructured[docx,pdf]
+python-dotenv
+pymongo
+langchain-groq
+pypdf
+python-dotenv
